@@ -8,13 +8,13 @@ LABEL_COL = "label"
 
 
 def get_criteo_columns(has_label=True):
-    """返回 Criteo 数据集列名。"""
+    """返回 Criteo 数据集列名"""
     features = DENSE_FEATURES + SPARSE_FEATURES
     return [LABEL_COL] + features if has_label else features
 
 
 def load_criteo_data(file_path, has_label=True):
-    """按 readme 规范加载 train/test。test.txt 不包含 label 列。"""
+    """加载 train/test。test.txt 不包含 label 列"""
     return pd.read_csv(
         file_path,
         sep="\t",
@@ -24,7 +24,7 @@ def load_criteo_data(file_path, has_label=True):
 
 
 class CriteoPreprocessor:
-    """训练集 fit，测试集 transform，保证映射一致。"""
+    """训练集 fit，测试集 transform，保证映射一致"""
 
     def __init__(self, num_bins=10):
         self.num_bins = num_bins
@@ -101,7 +101,7 @@ class CriteoPreprocessor:
         return work_df
 
     def fit_transform(self, train_df):
-        """在训练集上拟合规则并完成转换。"""
+        """在训练集上拟合规则并完成转换"""
         self._validate_columns(train_df, has_label=True)
 
         work_df = self._prepare_common(train_df)
@@ -114,7 +114,7 @@ class CriteoPreprocessor:
         return work_df, self.feature_vocab_sizes.copy()
 
     def transform(self, df, has_label=False):
-        """用训练集规则转换数据，禁止重新拟合。"""
+        """用训练集规则转换数据，禁止重新拟合"""
         if not self.is_fitted:
             raise RuntimeError("请先调用 fit_transform 再调用 transform。")
 
@@ -127,7 +127,7 @@ class CriteoPreprocessor:
 
 
 def perform_feature_engineering(train_df):
-    """兼容旧接口：仅对训练集进行 fit+transform。"""
+    """兼容旧接口：仅对训练集进行 fit+transform"""
     preprocessor = CriteoPreprocessor(num_bins=10)
     processed_df, vocab_sizes = preprocessor.fit_transform(train_df)
     return processed_df, vocab_sizes, preprocessor

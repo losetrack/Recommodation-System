@@ -7,15 +7,16 @@ class CriteoDataset(Dataset):
 		self.feature_names = feature_names
 		self.label_col = label_col
 		self.has_label = label_col in df.columns
+		self.df = df.copy()
 
 		self.features = {
-			feat: torch.as_tensor(df[feat].values, dtype=torch.long)
+			feat: torch.as_tensor(df[feat].to_numpy(copy=True), dtype=torch.long)
 			for feat in self.feature_names
 		}
 
 		self.labels = None
 		if self.has_label:
-			self.labels = torch.as_tensor(df[self.label_col].values, dtype=torch.float32)
+			self.labels = torch.as_tensor(df[self.label_col].to_numpy(copy=True), dtype=torch.float32)
 
 		self.length = len(df)
 
