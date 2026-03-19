@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import roc_auc_score
-from torch.utils.data import DataLoader
 
 tqdm_module = importlib.util.find_spec("tqdm.auto")
 if tqdm_module is not None:
@@ -15,24 +14,8 @@ if tqdm_module is not None:
 else:
 	tqdm = None
 
-from data_processer import (
-	DENSE_FEATURES,
-	SPARSE_FEATURES,
-	CriteoPreprocessor,
-	load_criteo_data,
-)
-from dataset import CriteoDataset
+from data_loader import build_in_memory_train_val_loaders, build_streaming_loader
 from model import DeepFM
-
-
-def split_train_val(df, val_ratio=0.1):
-	"""按时间顺序切分，避免未来信息泄漏。"""
-	total = len(df)
-	val_size = max(1, int(total * val_ratio))
-	train_df = df.iloc[:-val_size].copy()
-	val_df = df.iloc[-val_size:].copy()
-	return train_df, val_df
-
 
 def move_batch_to_device(x_dict, y, device):
 	x_dict = {k: v.to(device) for k, v in x_dict.items()}
@@ -114,22 +97,16 @@ def predict(model, data_loader, device, show_progress=True):
 def main(args):
 	os.makedirs(args.checkpoint_dir, exist_ok=True)
 
-	feature_names = DENSE_FEATURES + SPARSE_FEATURES
-
-	print("1) Loading training data...")
-	raw_train_df = load_criteo_data(args.train_path, has_label=True)
-	train_df, val_df = split_train_val(raw_train_df, val_ratio=args.val_ratio)
-
-	print("2) Training set fitting, preprocessing and transformation of the validation set...")
-	preprocessor = CriteoPreprocessor(num_bins=args.num_bins)
-	train_processed, feature_vocab_sizes = preprocessor.fit_transform(train_df)
-	val_processed = preprocessor.transform(val_df, has_label=True)
-
-	train_dataset = CriteoDataset(train_processed, feature_names=feature_names, label_col="label")
-	val_dataset = CriteoDataset(val_processed, feature_names=feature_names, label_col="label")
-
-	train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-	val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+	print("1) Loading data via data_loader...")
+	train_loader, val_loader, preprocessor, feature_vocab_sizes = build_in_memory_train_val_loaders(
+		train_path=args.train_path,
+		val_ratio=args.val_ratio,
+		num_bins=args.num_bins,
+		hash_dim=args.hash_dim,
+		batch_size=args.batch_size,
+		num_workers=args.num_workers,
+	)
+	feature_names = list(feature_vocab_sizes.keys())
 
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	model = DeepFM(
@@ -193,11 +170,14 @@ def main(args):
 	print(f"预处理器已保存到: {preprocessor_path}")
 
 	if args.predict_test:
-		print("4) 生成 test 预测结果...")
-		test_df = load_criteo_data(args.test_path, has_label=False)
-		test_processed = preprocessor.transform(test_df, has_label=False)
-		test_dataset = CriteoDataset(test_processed, feature_names=feature_names, label_col="label")
-		test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+		print("4) 生成 test 预测结果（streaming）...")
+		test_loader = build_streaming_loader(
+			file_path=args.test_path,
+			preprocessor=preprocessor,
+			has_label=False,
+			batch_size=args.batch_size,
+			num_workers=args.num_workers,
+		)
 
 		checkpoint = torch.load(best_model_path, map_location=device)
 		model.load_state_dict(checkpoint["model_state_dict"])
@@ -219,6 +199,8 @@ if __name__ == "__main__":
 
 	parser.add_argument("--val_ratio", type=float, default=0.1)
 	parser.add_argument("--num_bins", type=int, default=10)
+	parser.add_argument("--hash_dim", type=int, default=2**20)
+	parser.add_argument("--num_workers", type=int, default=0)
 
 	parser.add_argument("--epochs", type=int, default=3)
 	parser.add_argument("--batch_size", type=int, default=2048)
