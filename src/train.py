@@ -14,7 +14,8 @@ if tqdm_module is not None:
 else:
 	tqdm = None
 
-from data_loader import build_in_memory_train_val_loaders, build_streaming_loader
+from data_loader import build_feature_vocab_sizes, build_in_memory_train_val_loaders, build_streaming_loader
+from data_processer import CriteoPreprocessor, load_criteo_data
 from model import DeepFM
 
 def move_batch_to_device(x_dict, y, device):
@@ -94,18 +95,62 @@ def predict(model, data_loader, device, show_progress=True):
 	return probs
 
 
+def load_or_fit_preprocessor(args):
+	if args.preprocessor_path:
+		if not os.path.exists(args.preprocessor_path):
+			raise FileNotFoundError(f"未找到预处理器文件: {args.preprocessor_path}")
+		with open(args.preprocessor_path, "rb") as f:
+			return pickle.load(f)
+
+	print("2) Fitting preprocessor from train data...")
+	raw_train_df = load_criteo_data(args.train_path, has_label=True)
+	preprocessor = CriteoPreprocessor(num_bins=args.num_bins, hash_dim=args.hash_dim)
+	preprocessor.fit(raw_train_df)
+	return preprocessor
+
+
 def main(args):
 	os.makedirs(args.checkpoint_dir, exist_ok=True)
 
 	print("1) Loading data via data_loader...")
-	train_loader, val_loader, preprocessor, feature_vocab_sizes = build_in_memory_train_val_loaders(
-		train_path=args.train_path,
-		val_ratio=args.val_ratio,
-		num_bins=args.num_bins,
-		hash_dim=args.hash_dim,
-		batch_size=args.batch_size,
-		num_workers=args.num_workers,
-	)
+	if args.stream_train:
+		if not args.val_path:
+			raise ValueError("流式训练模式需要显式提供 --val_path，避免从同一文件中泄漏验证集。")
+
+		preprocessor = load_or_fit_preprocessor(args)
+		feature_vocab_sizes = build_feature_vocab_sizes(preprocessor)
+		train_loader = build_streaming_loader(
+			file_path=args.train_path,
+			preprocessor=preprocessor,
+			has_label=True,
+			batch_size=args.batch_size,
+			num_workers=args.num_workers,
+			strict_schema=not args.allow_bad_lines,
+			shuffle_buffer_size=args.stream_shuffle_buffer_size,
+			seed=args.seed,
+			num_samples=args.train_num_samples,
+		)
+		val_loader = build_streaming_loader(
+			file_path=args.val_path,
+			preprocessor=preprocessor,
+			has_label=True,
+			batch_size=args.batch_size,
+			num_workers=args.num_workers,
+			strict_schema=not args.allow_bad_lines,
+			shuffle_buffer_size=0,
+			seed=args.seed,
+			num_samples=args.val_num_samples,
+		)
+	else:
+		train_loader, val_loader, preprocessor, feature_vocab_sizes = build_in_memory_train_val_loaders(
+			train_path=args.train_path,
+			val_ratio=args.val_ratio,
+			num_bins=args.num_bins,
+			hash_dim=args.hash_dim,
+			batch_size=args.batch_size,
+			num_workers=args.num_workers,
+		)
+
 	feature_names = list(feature_vocab_sizes.keys())
 
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -195,12 +240,15 @@ if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Train DeepFM on Criteo-like dataset")
 	parser.add_argument("--train_path", type=str, default="./data/train.txt")
 	parser.add_argument("--test_path", type=str, default="./data/test.txt")
+	parser.add_argument("--val_path", type=str, default="", help="Validation file path for streaming mode")
 	parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints")
+	parser.add_argument("--preprocessor_path", type=str, default="", help="Reuse a fitted preprocessor for streaming mode")
 
 	parser.add_argument("--val_ratio", type=float, default=0.1)
 	parser.add_argument("--num_bins", type=int, default=10)
 	parser.add_argument("--hash_dim", type=int, default=2**20)
 	parser.add_argument("--num_workers", type=int, default=0)
+	parser.add_argument("--seed", type=int, default=42)
 
 	parser.add_argument("--epochs", type=int, default=3)
 	parser.add_argument("--batch_size", type=int, default=2048)
@@ -211,6 +259,11 @@ if __name__ == "__main__":
 	parser.add_argument("--hidden_units", type=int, nargs="+", default=[64, 32])
 	parser.add_argument("--dropout", type=float, default=0.2)
 
+	parser.add_argument("--stream_train", action="store_true", help="Use streaming dataloaders for train/val")
+	parser.add_argument("--stream_shuffle_buffer_size", type=int, default=0, help="Shuffle buffer size for streaming train loader")
+	parser.add_argument("--train_num_samples", type=int, default=None, help="Optional train sample count for streaming dataset length")
+	parser.add_argument("--val_num_samples", type=int, default=None, help="Optional validation sample count for streaming dataset length")
+	parser.add_argument("--allow_bad_lines", action="store_true", help="Pad/truncate malformed streaming rows instead of raising")
 	parser.add_argument("--predict_test", action="store_true")
 	parser.add_argument("--disable_progress", action="store_true", help="Disable tqdm progress bars")
 
