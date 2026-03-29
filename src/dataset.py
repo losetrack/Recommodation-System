@@ -1,5 +1,6 @@
 import os
 import random
+import json
 
 import numpy as np
 import torch
@@ -201,3 +202,76 @@ class CriteoStreamingDataset(IterableDataset):
 
 		for line_number, line in line_iter:
 			yield self._parse_line(line, line_number)
+
+
+class CriteoNPZDataset(IterableDataset):
+	"""按 shard 读取离线编码后的 NPZ 数据。"""
+
+	def __init__(self, manifest_path, shuffle_shards=False, shuffle_samples=False, seed=42):
+		if not os.path.exists(manifest_path):
+			raise FileNotFoundError(f"NPZ manifest not found: {manifest_path}")
+
+		self.manifest_path = manifest_path
+		with open(manifest_path, "r", encoding="utf-8") as f:
+			self.manifest = json.load(f)
+
+		self.root_dir = os.path.dirname(os.path.abspath(manifest_path))
+		self.has_label = bool(self.manifest.get("has_label", False))
+		self.shuffle_shards = shuffle_shards
+		self.shuffle_samples = shuffle_samples
+		self.seed = int(seed)
+		self.shards = list(self.manifest.get("shards", []))
+
+		if not self.shards:
+			raise ValueError(f"No shards found in manifest: {manifest_path}")
+
+	def __len__(self):
+		return int(self.manifest.get("num_rows", 0))
+
+	def _ordered_shards(self):
+		shards = list(self.shards)
+		worker_info = get_worker_info()
+		worker_id = worker_info.id if worker_info is not None else 0
+		num_workers = worker_info.num_workers if worker_info is not None else 1
+
+		if self.shuffle_shards:
+			rng = random.Random(self.seed + worker_id + int(torch.initial_seed()))
+			rng.shuffle(shards)
+
+		return shards[worker_id::num_workers]
+
+	def _load_shard(self, shard_file):
+		shard_path = os.path.join(self.root_dir, shard_file)
+		if not os.path.exists(shard_path):
+			raise FileNotFoundError(f"NPZ shard not found: {shard_path}")
+		return np.load(shard_path)
+
+	def _build_item(self, dense, sparse, idx, labels=None):
+		x_dict = {}
+		for i, feat in enumerate(DENSE_FEATURES):
+			x_dict[feat] = torch.tensor(int(dense[idx, i]), dtype=torch.long)
+		for i, feat in enumerate(SPARSE_FEATURES):
+			x_dict[feat] = torch.tensor(int(sparse[idx, i]), dtype=torch.long)
+
+		if labels is None:
+			return x_dict
+		return x_dict, torch.tensor(float(labels[idx]), dtype=torch.float32)
+
+	def __iter__(self):
+		worker_info = get_worker_info()
+		worker_id = worker_info.id if worker_info is not None else 0
+		rng = random.Random(self.seed + worker_id + int(torch.initial_seed()))
+
+		for shard in self._ordered_shards():
+			with self._load_shard(shard["file"]) as data:
+				dense = data["dense"]
+				sparse = data["sparse"]
+				labels = data["labels"] if self.has_label and "labels" in data else None
+
+				num_rows = dense.shape[0]
+				indices = list(range(num_rows))
+				if self.shuffle_samples:
+					rng.shuffle(indices)
+
+				for idx in indices:
+					yield self._build_item(dense, sparse, idx, labels=labels)

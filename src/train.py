@@ -14,7 +14,13 @@ if tqdm_module is not None:
 else:
 	tqdm = None
 
-from data_loader import build_feature_vocab_sizes, build_in_memory_train_val_loaders, build_streaming_loader
+from data_loader import (
+	build_feature_vocab_sizes,
+	build_in_memory_train_val_loaders,
+	build_npz_loader,
+	build_streaming_loader,
+	load_npz_bundle,
+)
 from data_processer import CriteoPreprocessor, load_criteo_data
 from model import DeepFM
 
@@ -113,7 +119,31 @@ def main(args):
 	os.makedirs(args.checkpoint_dir, exist_ok=True)
 
 	print("1) Loading data via data_loader...")
-	if args.stream_train:
+	if args.npz_train:
+		if not args.train_npz_dir or not args.val_npz_dir:
+			raise ValueError("NPZ 训练模式需要显式提供 --train_npz_dir 和 --val_npz_dir。")
+
+		_, preprocessor = load_npz_bundle(args.train_npz_dir)
+		feature_vocab_sizes = build_feature_vocab_sizes(preprocessor)
+		train_loader, train_manifest = build_npz_loader(
+			npz_dir=args.train_npz_dir,
+			batch_size=args.batch_size,
+			num_workers=args.num_workers,
+			shuffle=True,
+			seed=args.seed,
+		)
+		val_loader, _ = build_npz_loader(
+			npz_dir=args.val_npz_dir,
+			batch_size=args.batch_size,
+			num_workers=args.num_workers,
+			shuffle=False,
+			seed=args.seed,
+		)
+		print(
+			f"2) Loaded NPZ shards: train_rows={train_manifest.get('num_rows', 'unknown')} "
+			f"train_shards={train_manifest.get('num_shards', 'unknown')}"
+		)
+	elif args.stream_train:
 		if not args.val_path:
 			raise ValueError("流式训练模式需要显式提供 --val_path，避免从同一文件中泄漏验证集。")
 
@@ -243,6 +273,8 @@ if __name__ == "__main__":
 	parser.add_argument("--val_path", type=str, default="", help="Validation file path for streaming mode")
 	parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints")
 	parser.add_argument("--preprocessor_path", type=str, default="", help="Reuse a fitted preprocessor for streaming mode")
+	parser.add_argument("--train_npz_dir", type=str, default="", help="Directory containing train NPZ shards and manifest")
+	parser.add_argument("--val_npz_dir", type=str, default="", help="Directory containing val NPZ shards and manifest")
 
 	parser.add_argument("--val_ratio", type=float, default=0.1)
 	parser.add_argument("--num_bins", type=int, default=10)
@@ -260,6 +292,7 @@ if __name__ == "__main__":
 	parser.add_argument("--dropout", type=float, default=0.2)
 
 	parser.add_argument("--stream_train", action="store_true", help="Use streaming dataloaders for train/val")
+	parser.add_argument("--npz_train", action="store_true", help="Use offline NPZ shard dataloaders for train/val")
 	parser.add_argument("--stream_shuffle_buffer_size", type=int, default=0, help="Shuffle buffer size for streaming train loader")
 	parser.add_argument("--train_num_samples", type=int, default=None, help="Optional train sample count for streaming dataset length")
 	parser.add_argument("--val_num_samples", type=int, default=None, help="Optional validation sample count for streaming dataset length")

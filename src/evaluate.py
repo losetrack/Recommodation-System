@@ -6,7 +6,7 @@ import pickle
 import torch
 from sklearn.metrics import roc_auc_score
 
-from data_loader import build_streaming_loader
+from data_loader import build_npz_loader, build_streaming_loader, load_npz_bundle
 from model import DeepFM
 
 tqdm_module = importlib.util.find_spec("tqdm.auto")
@@ -68,13 +68,27 @@ def main(args):
 	).to(device)
 	model.load_state_dict(checkpoint["model_state_dict"])
 
-	loader = build_streaming_loader(
-		file_path=args.data_path,
-		preprocessor=preprocessor,
-		has_label=args.has_label,
-		batch_size=args.batch_size,
-		num_workers=args.num_workers,
-	)
+	if args.npz_input_dir:
+		manifest, _ = load_npz_bundle(args.npz_input_dir)
+		if bool(manifest.get("has_label", False)) != bool(args.has_label):
+			raise ValueError(
+				f"NPZ manifest has_label={manifest.get('has_label', False)} "
+				f"but --has_label={args.has_label}"
+			)
+		loader, _ = build_npz_loader(
+			npz_dir=args.npz_input_dir,
+			batch_size=args.batch_size,
+			num_workers=args.num_workers,
+			shuffle=False,
+		)
+	else:
+		loader = build_streaming_loader(
+			file_path=args.data_path,
+			preprocessor=preprocessor,
+			has_label=args.has_label,
+			batch_size=args.batch_size,
+			num_workers=args.num_workers,
+		)
 
 	probs, y_true = predict(model, loader, device, show_progress=not args.disable_progress)
 
@@ -96,6 +110,7 @@ if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Evaluate or predict with trained DeepFM")
 	parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints")
 	parser.add_argument("--data_path", type=str, default="./data/test.txt")
+	parser.add_argument("--npz_input_dir", type=str, default="", help="Directory containing NPZ manifest and shards")
 	parser.add_argument("--output_path", type=str, default="./checkpoints/predictions.txt")
 	parser.add_argument("--batch_size", type=int, default=2048)
 	parser.add_argument("--num_workers", type=int, default=0)

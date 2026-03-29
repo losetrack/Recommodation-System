@@ -1,4 +1,8 @@
 import os
+import json
+import pickle
+import sys
+import types
 
 import numpy as np
 import torch
@@ -10,7 +14,8 @@ from data_processer import (
 	CriteoPreprocessor,
 	load_criteo_data,
 )
-from dataset import CriteoStreamingDataset
+import data_processer as data_processer_module
+from dataset import CriteoNPZDataset, CriteoStreamingDataset
 
 
 def split_train_val(df, val_ratio=0.1):
@@ -168,3 +173,41 @@ def build_streaming_loader(
 		num_workers=num_workers,
 		pin_memory=torch.cuda.is_available(),
 	)
+
+
+def load_npz_bundle(npz_dir):
+	manifest_path = os.path.join(npz_dir, "manifest.json")
+	preprocessor_path = os.path.join(npz_dir, "preprocessor.pkl")
+
+	if not os.path.exists(manifest_path):
+		raise FileNotFoundError(f"未找到 NPZ manifest: {manifest_path}")
+	if not os.path.exists(preprocessor_path):
+		raise FileNotFoundError(f"未找到 NPZ preprocessor: {preprocessor_path}")
+
+	with open(manifest_path, "r", encoding="utf-8") as f:
+		manifest = json.load(f)
+	src_package = sys.modules.setdefault("src", types.ModuleType("src"))
+	setattr(src_package, "data_processer", data_processer_module)
+	sys.modules.setdefault("src.data_processer", data_processer_module)
+	with open(preprocessor_path, "rb") as f:
+		preprocessor = pickle.load(f)
+
+	return manifest, preprocessor
+
+
+def build_npz_loader(npz_dir, batch_size=2048, num_workers=0, shuffle=False, seed=42):
+	manifest, _ = load_npz_bundle(npz_dir)
+	dataset = CriteoNPZDataset(
+		manifest_path=os.path.join(npz_dir, "manifest.json"),
+		shuffle_shards=shuffle,
+		shuffle_samples=shuffle,
+		seed=seed,
+	)
+
+	return DataLoader(
+		dataset,
+		batch_size=batch_size,
+		shuffle=False,
+		num_workers=num_workers,
+		pin_memory=torch.cuda.is_available(),
+	), manifest
