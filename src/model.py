@@ -45,7 +45,8 @@ class DeepFM(nn.Module):
         dnn_layers = []
         for hidden_dim in dnn_hidden_units:
             dnn_layers.append(nn.Linear(input_dim, hidden_dim))
-            dnn_layers.append(nn.BatchNorm1d(hidden_dim)) # 引入 BN 层加速收敛
+            # LayerNorm 在 batch_size=1 时也能稳定工作，避免 BatchNorm 的训练期报错。
+            dnn_layers.append(nn.LayerNorm(hidden_dim))
             dnn_layers.append(nn.ReLU())
             dnn_layers.append(nn.Dropout(dropout_rate))
             input_dim = hidden_dim # 更新下一层的输入维度
@@ -114,7 +115,7 @@ class DeepFM(nn.Module):
         out_prob = torch.sigmoid(y_total)
         
         # 展平输出，使其形状变为 (batch_size,)
-        return out_prob.squeeze()
+        return out_prob.squeeze(-1)
 
 # 快速验证
 if __name__ == "__main__":

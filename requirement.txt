@@ -1,4 +1,6 @@
 numpy
 pandas
 torch
-tdqm
+tqdm
+mmh3
+scikit-learn

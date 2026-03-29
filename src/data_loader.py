@@ -15,7 +15,13 @@ from dataset import CriteoStreamingDataset
 
 def split_train_val(df, val_ratio=0.1):
 	"""按时间顺序切分，避免未来信息泄漏。"""
+	if not 0 < val_ratio < 1:
+		raise ValueError(f"val_ratio must be between 0 and 1, got {val_ratio}")
+
 	total = len(df)
+	if total < 2:
+		raise ValueError("数据量至少需要 2 条，才能切分 train/val")
+
 	val_size = max(1, int(total * val_ratio))
 	train_df = df.iloc[:-val_size].copy()
 	val_df = df.iloc[-val_size:].copy()
@@ -130,7 +136,17 @@ def build_in_memory_train_val_loaders(
 	return train_loader, val_loader, preprocessor, feature_vocab_sizes
 
 
-def build_streaming_loader(file_path, preprocessor, has_label=True, batch_size=2048, num_workers=0):
+def build_streaming_loader(
+	file_path,
+	preprocessor,
+	has_label=True,
+	batch_size=2048,
+	num_workers=0,
+	strict_schema=True,
+	shuffle_buffer_size=0,
+	seed=42,
+	num_samples=None,
+):
 	"""构建流式 DataLoader，逐行读取文件。"""
 	if not os.path.exists(file_path):
 		raise FileNotFoundError(f"文件不存在: {file_path}")
@@ -139,6 +155,10 @@ def build_streaming_loader(file_path, preprocessor, has_label=True, batch_size=2
 		file_path=file_path,
 		preprocessor=preprocessor,
 		has_label=has_label,
+		strict_schema=strict_schema,
+		shuffle_buffer_size=shuffle_buffer_size,
+		seed=seed,
+		num_samples=num_samples,
 	)
 
 	return DataLoader(

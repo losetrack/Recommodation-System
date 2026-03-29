@@ -1,3 +1,7 @@
+import os
+import random
+
+import numpy as np
 import torch
 from torch.utils.data import Dataset, IterableDataset
 from torch.utils.data import get_worker_info
@@ -36,14 +40,32 @@ class CriteoDataset(Dataset):
 class CriteoStreamingDataset(IterableDataset):
 	"""逐行读取样本并在线编码，避免一次性加载到内存。"""
 
-	def __init__(self, file_path, preprocessor, has_label=True):
+	def __init__(
+		self,
+		file_path,
+		preprocessor,
+		has_label=True,
+		strict_schema=True,
+		shuffle_buffer_size=0,
+		seed=42,
+		num_samples=None,
+	):
 		self.file_path = file_path
 		self.preprocessor = preprocessor
 		self.has_label = has_label
+		self.strict_schema = strict_schema
+		self.shuffle_buffer_size = max(0, int(shuffle_buffer_size))
+		self.seed = int(seed)
+		self.num_samples = num_samples
 
 		self.dense_features = DENSE_FEATURES
 		self.sparse_features = SPARSE_FEATURES
 		self.feature_names = self.dense_features + self.sparse_features
+		self.expected_fields = 1 + len(self.feature_names) if self.has_label else len(self.feature_names)
+		self._dense_edges = {
+			feat: None if preprocessor.dense_bin_edges.get(feat) is None else np.asarray(preprocessor.dense_bin_edges[feat])
+			for feat in self.dense_features
+		}
 
 	def _safe_to_float(self, value):
 		if value == "":
@@ -54,12 +76,12 @@ class CriteoStreamingDataset(IterableDataset):
 			return 0.0
 
 	def _bucketize_dense_value(self, feat, value):
-		edges = self.preprocessor.dense_bin_edges.get(feat)
+		edges = self._dense_edges.get(feat)
 
 		if edges is None:
 			return 0
 
-		idx = int(torch.searchsorted(torch.tensor(edges), torch.tensor(value), right=True).item()) - 1
+		idx = int(np.searchsorted(edges, value, side="right")) - 1
 		max_idx = len(edges) - 2
 		if idx < 0:
 			return 0
@@ -67,14 +89,30 @@ class CriteoStreamingDataset(IterableDataset):
 			return max_idx
 		return idx
 
-	def _parse_line(self, line):
-		parts = line.rstrip("\n").split("\t")
-		expected = 1 + len(self.feature_names) if self.has_label else len(self.feature_names)
+	def _parse_label(self, value, line_number):
+		if value == "":
+			if self.strict_schema:
+				raise ValueError(f"line {line_number}: empty label")
+			return 0.0
+		try:
+			return float(value)
+		except ValueError as exc:
+			raise ValueError(f"line {line_number}: invalid label {value!r}") from exc
 
-		if len(parts) < expected:
-			parts.extend([""] * (expected - len(parts)))
-		elif len(parts) > expected:
-			parts = parts[:expected]
+	def _parse_line(self, line, line_number):
+		parts = line.rstrip("\n").split("\t")
+
+		if len(parts) != self.expected_fields:
+			message = (
+				f"line {line_number}: expected {self.expected_fields} tab-separated fields, "
+				f"got {len(parts)}"
+			)
+			if self.strict_schema:
+				raise ValueError(message)
+			if len(parts) < self.expected_fields:
+				parts.extend([""] * (self.expected_fields - len(parts)))
+			else:
+				parts = parts[:self.expected_fields]
 
 		offset = 1 if self.has_label else 0
 		x_dict = {}
@@ -96,18 +134,70 @@ class CriteoStreamingDataset(IterableDataset):
 			return x_dict
 
 		label_raw = parts[0] if parts else "0"
-		label = 0.0 if label_raw == "" else float(label_raw)
+		label = self._parse_label(label_raw, line_number)
 		return x_dict, torch.tensor(label, dtype=torch.float32)
 
-	def __iter__(self):
+	def __len__(self):
+		if self.num_samples is None:
+			raise TypeError("Streaming dataset length is unknown; pass num_samples when constructing the loader.")
+		return self.num_samples
+
+	def _iter_file_chunk(self):
 		worker_info = get_worker_info()
 		worker_id = worker_info.id if worker_info is not None else 0
 		num_workers = worker_info.num_workers if worker_info is not None else 1
 
-		with open(self.file_path, "r", encoding="utf-8", errors="ignore") as f:
-			for line_idx, line in enumerate(f):
-				if line_idx % num_workers != worker_id:
-					continue
+		file_size = os.path.getsize(self.file_path)
+		chunk_size = (file_size + num_workers - 1) // num_workers
+		start = worker_id * chunk_size
+		end = min(file_size, start + chunk_size)
+
+		with open(self.file_path, "rb") as f:
+			if start > 0:
+				f.seek(start - 1)
+				f.readline()
+			position = f.tell()
+
+			while position < end:
+				raw_line = f.readline()
+				if not raw_line:
+					break
+				position = f.tell()
+				line_number = None
+				line = raw_line.decode("utf-8", errors="ignore")
 				if not line.strip():
 					continue
-				yield self._parse_line(line)
+				yield line_number, line
+
+	def _iter_decoded_lines(self):
+		for fallback_idx, (line_number, line) in enumerate(self._iter_file_chunk(), start=1):
+			yield fallback_idx if line_number is None else line_number, line
+
+	def _shuffle_stream(self, iterable, rng):
+		if self.shuffle_buffer_size <= 1:
+			yield from iterable
+			return
+
+		buffer = []
+
+		for item in iterable:
+			buffer.append(item)
+			if len(buffer) >= self.shuffle_buffer_size:
+				idx = rng.randrange(len(buffer))
+				yield buffer.pop(idx)
+
+		while buffer:
+			idx = rng.randrange(len(buffer))
+			yield buffer.pop(idx)
+
+	def __iter__(self):
+		worker_info = get_worker_info()
+		worker_id = worker_info.id if worker_info is not None else 0
+		rng = random.Random(self.seed + worker_id + int(torch.initial_seed()))
+
+		line_iter = self._iter_decoded_lines()
+		if self.shuffle_buffer_size > 1:
+			line_iter = self._shuffle_stream(line_iter, rng)
+
+		for line_number, line in line_iter:
+			yield self._parse_line(line, line_number)
