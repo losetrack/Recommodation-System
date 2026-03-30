@@ -25,18 +25,21 @@ from data_processer import CriteoPreprocessor, load_criteo_data
 from model import DeepFM
 
 def move_batch_to_device(x_dict, y, device):
+	"""将一个 batch 的特征与标签移动到目标设备。"""
 	x_dict = {k: v.to(device) for k, v in x_dict.items()}
 	y = y.to(device)
 	return x_dict, y
 
 
 def build_progress(iterable, enabled, desc):
+	"""按需包装 tqdm 进度条，不可用时回退原迭代器。"""
 	if enabled and tqdm is not None:
 		return tqdm(iterable, desc=desc, leave=False)
 	return iterable
 
 
 def train_one_epoch(model, data_loader, criterion, optimizer, device, show_progress=True, epoch_idx=1):
+	"""执行一轮训练并返回平均损失。"""
 	model.train()
 	losses = []
 	iterator = build_progress(data_loader, show_progress, f"Train Epoch {epoch_idx}")
@@ -59,6 +62,7 @@ def train_one_epoch(model, data_loader, criterion, optimizer, device, show_progr
 
 @torch.no_grad()
 def evaluate(model, data_loader, criterion, device, show_progress=True, epoch_idx=1):
+	"""在验证集上评估模型并返回损失与 AUC。"""
 	model.eval()
 	losses = []
 	y_true = []
@@ -89,6 +93,7 @@ def evaluate(model, data_loader, criterion, device, show_progress=True, epoch_id
 
 @torch.no_grad()
 def predict(model, data_loader, device, show_progress=True):
+	"""对无标签数据执行推理并返回预测概率列表。"""
 	model.eval()
 	probs = []
 	iterator = build_progress(data_loader, show_progress, "Predict")
@@ -102,6 +107,7 @@ def predict(model, data_loader, device, show_progress=True):
 
 
 def load_or_fit_preprocessor(args):
+	"""加载已有预处理器，或根据训练集重新拟合预处理器。"""
 	if args.preprocessor_path:
 		if not os.path.exists(args.preprocessor_path):
 			raise FileNotFoundError(f"未找到预处理器文件: {args.preprocessor_path}")
@@ -116,6 +122,7 @@ def load_or_fit_preprocessor(args):
 
 
 def main(args):
+	"""训练 DeepFM 主流程，支持内存、流式与 NPZ 三种数据模式。"""
 	os.makedirs(args.checkpoint_dir, exist_ok=True)
 
 	print("1) Loading data via data_loader...")

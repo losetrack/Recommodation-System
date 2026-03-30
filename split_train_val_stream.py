@@ -3,6 +3,7 @@ import os
 
 
 def build_parser():
+    """构建 train/val 切分脚本参数解析器。"""
     parser = argparse.ArgumentParser(description="Split a large train.txt into streaming train/val files.")
     parser.add_argument("--input", type=str, default="./data/train.txt", help="Path to source train file")
     parser.add_argument("--train-output", type=str, default="./data/train_stream.txt", help="Output path for train split")
@@ -12,6 +13,7 @@ def build_parser():
 
 
 def validate_args(args):
+    """校验输入路径与验证集比例参数。"""
     if not os.path.exists(args.input):
         raise FileNotFoundError(f"Input file not found: {args.input}")
     if not 0 < args.val_ratio < 1:
@@ -19,6 +21,7 @@ def validate_args(args):
 
 
 def count_lines(file_path):
+    """统计文件行数并确保可切分为训练/验证集。"""
     total = 0
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         for _ in f:
@@ -29,6 +32,7 @@ def count_lines(file_path):
 
 
 def split_file(input_path, train_output_path, val_output_path, train_lines):
+    """按给定训练行数将输入文件顺序切分为 train 与 val。"""
     written_train = 0
     written_val = 0
 
@@ -47,6 +51,7 @@ def split_file(input_path, train_output_path, val_output_path, train_lines):
 
 
 def main():
+    """执行大文件切分主流程。"""
     parser = build_parser()
     args = parser.parse_args()
     validate_args(args)

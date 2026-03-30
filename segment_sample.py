@@ -3,6 +3,7 @@ import os
 
 
 def build_parser():
+    """构建抽样脚本命令行参数。"""
     parser = argparse.ArgumentParser(description="Stream-copy a small subset from Criteo train.txt")
     parser.add_argument("--input", type=str, default="./data/train.txt", help="Path to original train.txt")
     parser.add_argument("--output", type=str, default="./data/train_small.txt", help="Path to output subset file")
@@ -12,6 +13,7 @@ def build_parser():
 
 
 def validate_args(args):
+    """校验输入路径与采样参数是否合法。"""
     if not os.path.exists(args.input):
         raise FileNotFoundError(f"Input file not found: {args.input}")
     if args.n < 0:
@@ -21,6 +23,7 @@ def validate_args(args):
 
 
 def count_lines(file_path):
+    """统计文本文件总行数。"""
     total = 0
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         for _ in f:
@@ -29,6 +32,7 @@ def count_lines(file_path):
 
 
 def resolve_target_lines(total_lines, n, frac):
+    """根据行数或比例计算目标抽样条数。"""
     if total_lines <= 0:
         raise ValueError("Input file is empty")
 
@@ -37,6 +41,7 @@ def resolve_target_lines(total_lines, n, frac):
 
 
 def stream_copy_head(input_path, output_path, target_lines):
+    """流式复制输入文件前 target_lines 行到输出文件。"""
     written = 0
     with open(input_path, "r", encoding="utf-8", errors="ignore") as fin:
         with open(output_path, "w", encoding="utf-8") as fout:
@@ -49,6 +54,7 @@ def stream_copy_head(input_path, output_path, target_lines):
 
 
 def main():
+    """执行抽样主流程并输出结果文件。"""
     parser = build_parser()
     args = parser.parse_args()
     validate_args(args)

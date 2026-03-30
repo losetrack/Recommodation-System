@@ -17,6 +17,7 @@ else:
 
 
 def build_progress(iterable, enabled, desc):
+	"""按需包装 tqdm 进度条，不可用时返回原迭代器。"""
 	if enabled and tqdm is not None:
 		return tqdm(iterable, desc=desc, leave=False)
 	return iterable
@@ -24,6 +25,7 @@ def build_progress(iterable, enabled, desc):
 
 @torch.no_grad()
 def predict(model, data_loader, device, show_progress=True):
+	"""执行评估推理，返回预测概率及可选真实标签。"""
 	model.eval()
 	probs = []
 	y_true = []
@@ -45,6 +47,7 @@ def predict(model, data_loader, device, show_progress=True):
 
 
 def main(args):
+	"""加载模型并在流式或 NPZ 数据上执行预测/评估。"""
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 	model_path = os.path.join(args.checkpoint_dir, "best_model.pt")

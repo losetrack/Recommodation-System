@@ -12,6 +12,7 @@ from data_processer import DENSE_FEATURES, SPARSE_FEATURES
 
 class CriteoDataset(Dataset):
 	def __init__(self, df, feature_names, label_col="label"):
+		"""用内存 DataFrame 初始化基础监督数据集。"""
 		self.feature_names = feature_names
 		self.label_col = label_col
 		self.has_label = label_col in df.columns
@@ -29,9 +30,11 @@ class CriteoDataset(Dataset):
 		self.length = len(df)
 
 	def __len__(self):
+		"""返回样本总数。"""
 		return self.length
 
 	def __getitem__(self, idx):
+		"""按索引返回特征字典与可选标签。"""
 		x_dict = {feat: self.features[feat][idx] for feat in self.feature_names}
 		if self.has_label:
 			return x_dict, self.labels[idx]
@@ -51,6 +54,7 @@ class CriteoStreamingDataset(IterableDataset):
 		seed=42,
 		num_samples=None,
 	):
+		"""初始化流式数据集配置与预处理缓存。"""
 		self.file_path = file_path
 		self.preprocessor = preprocessor
 		self.has_label = has_label
@@ -69,6 +73,7 @@ class CriteoStreamingDataset(IterableDataset):
 		}
 
 	def _safe_to_float(self, value):
+		"""将字符串安全转换为浮点数，异常值回退为 0。"""
 		if value == "":
 			return 0.0
 		try:
@@ -77,6 +82,7 @@ class CriteoStreamingDataset(IterableDataset):
 			return 0.0
 
 	def _bucketize_dense_value(self, feat, value):
+		"""按已拟合分箱边界将连续值映射为桶索引。"""
 		edges = self._dense_edges.get(feat)
 
 		if edges is None:
@@ -91,6 +97,7 @@ class CriteoStreamingDataset(IterableDataset):
 		return idx
 
 	def _parse_label(self, value, line_number):
+		"""解析并校验标签字段。"""
 		if value == "":
 			if self.strict_schema:
 				raise ValueError(f"line {line_number}: empty label")
@@ -101,6 +108,7 @@ class CriteoStreamingDataset(IterableDataset):
 			raise ValueError(f"line {line_number}: invalid label {value!r}") from exc
 
 	def _parse_line(self, line, line_number):
+		"""将单行文本解析为模型输入特征与可选标签。"""
 		parts = line.rstrip("\n").split("\t")
 
 		if len(parts) != self.expected_fields:
@@ -139,11 +147,13 @@ class CriteoStreamingDataset(IterableDataset):
 		return x_dict, torch.tensor(label, dtype=torch.float32)
 
 	def __len__(self):
+		"""返回样本数；未知长度时抛出异常。"""
 		if self.num_samples is None:
 			raise TypeError("Streaming dataset length is unknown; pass num_samples when constructing the loader.")
 		return self.num_samples
 
 	def _iter_file_chunk(self):
+		"""按 worker 分片范围迭代二进制文件行。"""
 		worker_info = get_worker_info()
 		worker_id = worker_info.id if worker_info is not None else 0
 		num_workers = worker_info.num_workers if worker_info is not None else 1
@@ -171,10 +181,12 @@ class CriteoStreamingDataset(IterableDataset):
 				yield line_number, line
 
 	def _iter_decoded_lines(self):
+		"""将文件分片内容解码为带行号的文本流。"""
 		for fallback_idx, (line_number, line) in enumerate(self._iter_file_chunk(), start=1):
 			yield fallback_idx if line_number is None else line_number, line
 
 	def _shuffle_stream(self, iterable, rng):
+		"""使用缓冲区对流式样本做近似随机打乱。"""
 		if self.shuffle_buffer_size <= 1:
 			yield from iterable
 			return
@@ -192,6 +204,7 @@ class CriteoStreamingDataset(IterableDataset):
 			yield buffer.pop(idx)
 
 	def __iter__(self):
+		"""迭代输出流式编码后的样本。"""
 		worker_info = get_worker_info()
 		worker_id = worker_info.id if worker_info is not None else 0
 		rng = random.Random(self.seed + worker_id + int(torch.initial_seed()))
@@ -208,6 +221,7 @@ class CriteoNPZDataset(IterableDataset):
 	"""按 shard 读取离线编码后的 NPZ 数据。"""
 
 	def __init__(self, manifest_path, shuffle_shards=False, shuffle_samples=False, seed=42):
+		"""读取 manifest 并初始化 NPZ 分片迭代配置。"""
 		if not os.path.exists(manifest_path):
 			raise FileNotFoundError(f"NPZ manifest not found: {manifest_path}")
 
@@ -226,9 +240,11 @@ class CriteoNPZDataset(IterableDataset):
 			raise ValueError(f"No shards found in manifest: {manifest_path}")
 
 	def __len__(self):
+		"""返回 manifest 中记录的样本总数。"""
 		return int(self.manifest.get("num_rows", 0))
 
 	def _ordered_shards(self):
+		"""按 worker 规则返回当前进程负责的分片顺序。"""
 		shards = list(self.shards)
 		worker_info = get_worker_info()
 		worker_id = worker_info.id if worker_info is not None else 0
@@ -241,12 +257,14 @@ class CriteoNPZDataset(IterableDataset):
 		return shards[worker_id::num_workers]
 
 	def _load_shard(self, shard_file):
+		"""加载单个 NPZ 分片文件。"""
 		shard_path = os.path.join(self.root_dir, shard_file)
 		if not os.path.exists(shard_path):
 			raise FileNotFoundError(f"NPZ shard not found: {shard_path}")
 		return np.load(shard_path)
 
 	def _build_item(self, dense, sparse, idx, labels=None):
+		"""从分片数组中构造单条模型输入样本。"""
 		x_dict = {}
 		for i, feat in enumerate(DENSE_FEATURES):
 			x_dict[feat] = torch.tensor(int(dense[idx, i]), dtype=torch.long)
@@ -258,6 +276,7 @@ class CriteoNPZDataset(IterableDataset):
 		return x_dict, torch.tensor(float(labels[idx]), dtype=torch.float32)
 
 	def __iter__(self):
+		"""按分片与样本顺序迭代输出训练样本。"""
 		worker_info = get_worker_info()
 		worker_id = worker_info.id if worker_info is not None else 0
 		rng = random.Random(self.seed + worker_id + int(torch.initial_seed()))

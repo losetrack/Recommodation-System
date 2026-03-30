@@ -37,6 +37,7 @@ class CriteoArrayDataset(Dataset):
 	"""基于 numpy 数组构建 Dataset。"""
 
 	def __init__(self, dense, sparse, labels=None):
+		"""使用离线数组初始化样本与可选标签张量。"""
 		if dense.shape[0] != sparse.shape[0]:
 			raise ValueError("dense 和 sparse 样本数不一致")
 
@@ -56,9 +57,11 @@ class CriteoArrayDataset(Dataset):
 		self.length = self.dense.shape[0]
 
 	def __len__(self):
+		"""返回数据集样本总数。"""
 		return self.length
 
 	def __getitem__(self, idx):
+		"""按索引返回单条样本特征字典及可选标签。"""
 		x_dict = {}
 
 		for i, feat in enumerate(DENSE_FEATURES):
@@ -91,6 +94,7 @@ def build_feature_vocab_sizes(preprocessor):
 
 
 def _build_array_dataloader(dense, sparse, labels, batch_size, shuffle, num_workers):
+	"""基于数组数据构建标准 PyTorch DataLoader。"""
 	dataset = CriteoArrayDataset(dense=dense, sparse=sparse, labels=labels)
 	return DataLoader(
 		dataset,
@@ -176,6 +180,7 @@ def build_streaming_loader(
 
 
 def load_npz_bundle(npz_dir):
+	"""加载 NPZ 清单与预处理器对象。"""
 	manifest_path = os.path.join(npz_dir, "manifest.json")
 	preprocessor_path = os.path.join(npz_dir, "preprocessor.pkl")
 
@@ -196,6 +201,7 @@ def load_npz_bundle(npz_dir):
 
 
 def build_npz_loader(npz_dir, batch_size=2048, num_workers=0, shuffle=False, seed=42):
+	"""基于 NPZ 分片构建可迭代 DataLoader，并返回清单信息。"""
 	manifest, _ = load_npz_bundle(npz_dir)
 	dataset = CriteoNPZDataset(
 		manifest_path=os.path.join(npz_dir, "manifest.json"),

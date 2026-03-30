@@ -16,6 +16,7 @@ from data_processer import CriteoPreprocessor, get_criteo_columns
 
 
 def build_parser():
+    """构建命令行参数解析器。"""
     parser = argparse.ArgumentParser(description="Preprocess Criteo-like TSV data into chunked NPZ shards.")
     parser.add_argument("--input", type=str, required=True, help="Path to source TSV file")
     parser.add_argument("--output-dir", type=str, required=True, help="Directory to write NPZ shards")
@@ -32,6 +33,7 @@ def build_parser():
 
 
 def validate_args(args):
+    """校验预处理脚本参数的有效性。"""
     if not os.path.exists(args.input):
         raise FileNotFoundError(f"Input file not found: {args.input}")
     if args.chunk_size <= 0:
@@ -47,6 +49,7 @@ def validate_args(args):
 
 
 def load_preprocessor(args):
+    """加载已有预处理器，或基于样本数据拟合新预处理器。"""
     if args.preprocessor_path:
         with open(args.preprocessor_path, "rb") as f:
             return pickle.load(f)
@@ -66,6 +69,7 @@ def load_preprocessor(args):
 
 
 def iter_chunks(file_path, has_label, chunk_size):
+    """按块读取 TSV 文件并逐块产出 DataFrame。"""
     yield from pd.read_csv(
         file_path,
         sep="\t",
@@ -76,6 +80,7 @@ def iter_chunks(file_path, has_label, chunk_size):
 
 
 def save_shard(output_dir, shard_idx, dense, sparse, labels, compressed):
+    """将单个特征分片保存为 NPZ 文件并返回元信息。"""
     save_fn = np.savez_compressed if compressed else np.savez
     shard_name = f"part-{shard_idx:05d}.npz"
     shard_path = os.path.join(output_dir, shard_name)
@@ -92,6 +97,7 @@ def save_shard(output_dir, shard_idx, dense, sparse, labels, compressed):
 
 
 def write_manifest(output_dir, manifest):
+    """将分片清单写入 manifest.json。"""
     manifest_path = os.path.join(output_dir, "manifest.json")
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
@@ -99,6 +105,7 @@ def write_manifest(output_dir, manifest):
 
 
 def main():
+    """执行数据预处理主流程并产出 NPZ 分片与清单。"""
     parser = build_parser()
     args = parser.parse_args()
     validate_args(args)
